@@ -1,0 +1,54 @@
+[project]
+name = "rag-service"
+version = "1.0.0"
+description = "Database Schema RAG Service with LightRAG, PGVector, and Neo4j"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "lightrag-hku[api]",
+    "httpx",
+    "tenacity",
+    # Database - PostgreSQL + PGVector
+    "psycopg2-binary",
+    "asyncpg",
+    # Database - Neo4j
+    "neo4j",
+    # MCP Server
+    "fastmcp",
+    # LLM Integration
+    "litellm",
+    "openai",
+    # Environment & Configuration
+    "python-dotenv",
+    "pydantic",
+    "pydantic-settings",
+    # Data Processing
+    "numpy",
+    "networkx",
+    # Logging
+    "structlog",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "black",
+    "isort",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.black]
+line-length = 100
+target-version = ['py311']
+
+[tool.isort]
+profile = "black"
+line_length = 100
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
