@@ -1,6 +1,7 @@
 """Script to test query functionality."""
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -22,11 +23,7 @@ async def main():
     try:
         # Test queries
         test_queries = [
-            "tìm thông tin liên quan đến số điện thoại",
-            "các bảng có cột email",
-            "foreign key relationships",
-            "tables in mysql_application_db",
-            "columns with timestamp type"
+            "tìm thông tin liên quan đến số điện thoại"
         ]
         
         for query in test_queries:
@@ -36,15 +33,8 @@ async def main():
             
             result = await rag_service.query(query=query, top_k=5)
             
-            if result["success"]:
-                logger.info(f"Total chunks: {result['total_chunks']}")
-                for chunk_key, chunk_data in result["chunks"].items():
-                    logger.info(f"\n{chunk_key}:")
-                    logger.info(f"  Entity: {chunk_data['Entity']}")
-                    content_preview = chunk_data['Content'][:200]
-                    logger.info(f"  Content: {content_preview}...")
-            else:
-                logger.error(f"Query failed: {result.get('error')}")
+            # Print full result as JSON
+            print(json.dumps(result, indent=2, ensure_ascii=False))
         
     except Exception as e:
         logger.error(f"Error during test: {e}")
