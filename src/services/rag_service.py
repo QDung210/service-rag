@@ -1,9 +1,6 @@
 """RAG Service using LightRAG with PGVector and Neo4j."""
 
-import json
-from lightrag import LightRAG, QueryParam
-from lightrag.kg.neo4j_impl import Neo4JStorage
-from lightrag.kg.postgres_impl import PGVectorStorage
+from lightrag import LightRAG
 
 from src.core.config import settings
 from src.core.logging import logger
@@ -57,6 +54,38 @@ class RAGService:
             await self._neo4j_driver.close()
             self._neo4j_driver = None
     
+    def _get_neo4j_driver(self):
+        """Get or create Neo4j driver."""
+        # Try to access from LightRAG's internal storage
+        if hasattr(self.rag, '_graph_storage'):
+            graph_storage = self.rag._graph_storage
+            if hasattr(graph_storage, 'driver'):
+                return graph_storage.driver
+            elif hasattr(graph_storage, '_driver'):
+                return graph_storage._driver
+        
+        if hasattr(self.rag, '_storages'):
+            storages = self.rag._storages
+            if 'graph' in storages:
+                graph_storage = storages['graph']
+                if hasattr(graph_storage, 'driver'):
+                    return graph_storage.driver
+                elif hasattr(graph_storage, '_driver'):
+                    return graph_storage._driver
+        
+        # Use cached driver or create new one
+        if not self._neo4j_driver:
+            try:
+                from neo4j import AsyncGraphDatabase
+                self._neo4j_driver = AsyncGraphDatabase.driver(
+                    settings.NEO4J_URI,
+                    auth=(settings.NEO4J_USERNAME, settings.NEO4J_PASSWORD)
+                )
+            except Exception:
+                return None
+        
+        return self._neo4j_driver
+    
     async def _get_neo4j_description(self, entity_name: str) -> str:
         """
         Get entity description from Neo4j.
@@ -71,55 +100,21 @@ class RAGService:
             return ''
         
         try:
-            # Try to access Neo4j driver
-            driver = None
-            
-            # Method 1: Try _graph_storage (private attribute)
-            if hasattr(self.rag, '_graph_storage'):
-                graph_storage_obj = self.rag._graph_storage
-                if hasattr(graph_storage_obj, 'driver'):
-                    driver = graph_storage_obj.driver
-                elif hasattr(graph_storage_obj, '_driver'):
-                    driver = graph_storage_obj._driver
-            
-            # Method 2: Try accessing through _storages dict
-            if not driver and hasattr(self.rag, '_storages'):
-                storages = self.rag._storages
-                if 'graph' in storages:
-                    graph_storage_obj = storages['graph']
-                    if hasattr(graph_storage_obj, 'driver'):
-                        driver = graph_storage_obj.driver
-                    elif hasattr(graph_storage_obj, '_driver'):
-                        driver = graph_storage_obj._driver
-            
-            # Method 3: Use cached driver or create new one
+            driver = self._get_neo4j_driver()
             if not driver:
-                if self._neo4j_driver:
-                    driver = self._neo4j_driver
-                else:
-                    try:
-                        from neo4j import AsyncGraphDatabase
-                        driver = AsyncGraphDatabase.driver(
-                            settings.NEO4J_URI,
-                            auth=(settings.NEO4J_USERNAME, settings.NEO4J_PASSWORD)
-                        )
-                        self._neo4j_driver = driver  # Cache it
-                    except Exception:
-                        return ''
+                return ''
             
-            if driver:
-                async with driver.session() as session:
-                    cypher_query = """
-                    MATCH (n {entity_id: $entity_id})
-                    RETURN n.description as description
-                    LIMIT 1
-                    """
-                    result = await session.run(cypher_query, entity_id=entity_name)
-                    record = await result.single()
-                    
-                    if record:
-                        description = record.get('description', '') or ''
-                        return description
+            async with driver.session() as session:
+                cypher_query = """
+                MATCH (n {entity_id: $entity_id})
+                RETURN n.description as description
+                LIMIT 1
+                """
+                result = await session.run(cypher_query, entity_id=entity_name)
+                record = await result.single()
+                
+                if record:
+                    return record.get('description', '') or ''
         except Exception:
             pass
         
@@ -159,122 +154,8 @@ class RAGService:
             for result in results:
                 entity_name = result.get('entity_name', 'N/A')
                 
-                # Debug: log result keys to understand structure
-                if chunk_idx == 1:
-                    logger.info(f"Sample result keys: {list(result.keys())}")
-                    logger.info(f"Sample result structure: {json.dumps({k: str(v)[:100] for k, v in result.items()}, indent=2, ensure_ascii=False)}")
-                
-                # Try to get content from various possible keys
-                content = result.get('content') or result.get('description') or ''
-                
-                # Try entity_data if available
-                if not content:
-                    entity_data = result.get('entity_data')
-                    if isinstance(entity_data, dict):
-                        content = entity_data.get('description') or entity_data.get('content') or ''
-                
-                # Always try to get full description from graph storage (Neo4j)
-                # because entity_vdb.query() may not return full description
-                # Query for all entity types (Column, Table, Database) to get rich descriptions
-                if entity_name:
-                    try:
-                        logger.info(f"Attempting to query Neo4j for entity: {entity_name}")
-                        
-                        # Try to access Neo4j driver from LightRAG's internal storage
-                        driver = None
-                        
-                        # Method 1: Try _graph_storage (private attribute)
-                        if hasattr(self.rag, '_graph_storage'):
-                            graph_storage_obj = self.rag._graph_storage
-                            if hasattr(graph_storage_obj, 'driver'):
-                                driver = graph_storage_obj.driver
-                            elif hasattr(graph_storage_obj, '_driver'):
-                                driver = graph_storage_obj._driver
-                        
-                        # Method 2: Try accessing through _storages dict
-                        if not driver and hasattr(self.rag, '_storages'):
-                            storages = self.rag._storages
-                            if 'graph' in storages:
-                                graph_storage_obj = storages['graph']
-                                if hasattr(graph_storage_obj, 'driver'):
-                                    driver = graph_storage_obj.driver
-                                elif hasattr(graph_storage_obj, '_driver'):
-                                    driver = graph_storage_obj._driver
-                        
-                        # Method 3: Use cached driver or create new one
-                        if not driver:
-                            if self._neo4j_driver:
-                                driver = self._neo4j_driver
-                            else:
-                                try:
-                                    from neo4j import AsyncGraphDatabase
-                                    driver = AsyncGraphDatabase.driver(
-                                        settings.NEO4J_URI,
-                                        auth=(settings.NEO4J_USERNAME, settings.NEO4J_PASSWORD)
-                                    )
-                                    self._neo4j_driver = driver  # Cache it
-                                    logger.info("Created new Neo4j driver from config")
-                                except Exception as driver_error:
-                                    logger.debug(f"Could not create Neo4j driver: {driver_error}")
-                        
-                        if driver:
-                            logger.info(f"Found Neo4j driver, querying...")
-                            async with driver.session() as session:
-                                # Query entity node by entity_id
-                                cypher_query = """
-                                MATCH (n {entity_id: $entity_id})
-                                RETURN n.description as description, n.entity_data as entity_data
-                                LIMIT 1
-                                """
-                                result = await session.run(cypher_query, entity_id=entity_name)
-                                record = await result.single()
-                                
-                                if not record:
-                                    logger.info(f"No node found in Neo4j for entity_id: {entity_name}")
-                                else:
-                                    logger.info(f"Found node in Neo4j for {entity_name}")
-                                
-                                if record:
-                                    # Get description directly from record
-                                    graph_description = record.get('description', '') or ''
-                                    
-                                    # Also try entity_data if description is empty
-                                    if not graph_description:
-                                        entity_data_str = record.get('entity_data', '')
-                                        if entity_data_str:
-                                            try:
-                                                if isinstance(entity_data_str, str):
-                                                    entity_data = json.loads(entity_data_str)
-                                                else:
-                                                    entity_data = entity_data_str
-                                                if isinstance(entity_data, dict):
-                                                    graph_description = entity_data.get('description', '') or entity_data.get('content', '')
-                                            except Exception as parse_error:
-                                                logger.debug(f"Error parsing entity_data: {parse_error}")
-                                    
-                                    if graph_description:
-                                        # Always use Neo4j description if available (it's more complete)
-                                        content = graph_description
-                                        logger.info(f"✓ Found description for {entity_name}: {len(content)} chars")
-                                    else:
-                                        logger.info(f"✗ No description found in Neo4j for {entity_name}")
-                        else:
-                            logger.info(f"✗ No Neo4j driver found. graph_storage attributes: {dir(graph_storage)}")
-                    except Exception as e:
-                        logger.info(f"✗ Error querying Neo4j for {entity_name}: {e}")
-                        import traceback
-                        logger.debug(traceback.format_exc())
-                        # Try alternative method if available
-                        try:
-                            if hasattr(self.rag.graph_storage, 'get_entity'):
-                                entity_info = await self.rag.graph_storage.get_entity(entity_name)
-                                if entity_info:
-                                    if isinstance(entity_info, dict):
-                                        graph_desc = entity_info.get('description') or entity_info.get('content') or ''
-                                        if graph_desc:
-                                            content = graph_desc
-                        except:
-                            pass
+                # Get description from Neo4j (always query for full description)
+                content = await self._get_neo4j_description(entity_name)
                 
                 # Parse entity type and name
                 if ':' in entity_name:
@@ -287,29 +168,22 @@ class RAGService:
                     # Column format: "database.table.column"
                     parts = name.split('.')
                     if len(parts) >= 3:
-                        db_name, table_name, col_name = parts[0], parts[1], '.'.join(parts[2:])
+                        db_name, table_name = parts[0], parts[1]
                         
                         # Add Database
                         db_key = f"Database:{db_name}"
-                        chunks[f"chunk{chunk_idx}"] = {
-                            "Entity": db_key,
-                            "Content": f"Database: {db_name}"
-                        }
+                        db_content = await self._get_neo4j_description(db_key) or f"Database: {db_name}"
+                        chunks[f"chunk{chunk_idx}"] = {"Entity": db_key, "Content": db_content}
                         chunk_idx += 1
                         
                         # Add Table
                         table_key = f"Table:{db_name}.{table_name}"
-                        chunks[f"chunk{chunk_idx}"] = {
-                            "Entity": table_key,
-                            "Content": f"Table: {table_name} in database {db_name}"
-                        }
+                        table_content = await self._get_neo4j_description(table_key) or f"Table: {table_name} in database {db_name}"
+                        chunks[f"chunk{chunk_idx}"] = {"Entity": table_key, "Content": table_content}
                         chunk_idx += 1
                         
-                        # Add Column (the matched entity)
-                        chunks[f"chunk{chunk_idx}"] = {
-                            "Entity": entity_name,
-                            "Content": content
-                        }
+                        # Add Column
+                        chunks[f"chunk{chunk_idx}"] = {"Entity": entity_name, "Content": content or entity_name}
                         chunk_idx += 1
                 
                 elif entity_type == 'Table':
@@ -320,25 +194,20 @@ class RAGService:
                         
                         # Add Database
                         db_key = f"Database:{db_name}"
-                        chunks[f"chunk{chunk_idx}"] = {
-                            "Entity": db_key,
-                            "Content": f"Database: {db_name}"
-                        }
+                        db_content = await self._get_neo4j_description(db_key) or f"Database: {db_name}"
+                        chunks[f"chunk{chunk_idx}"] = {"Entity": db_key, "Content": db_content}
                         chunk_idx += 1
                     
-                    # Add Table (the matched entity)
-                    chunks[f"chunk{chunk_idx}"] = {
-                        "Entity": entity_name,
-                        "Content": content
-                    }
+                    # Add Table
+                    chunks[f"chunk{chunk_idx}"] = {"Entity": entity_name, "Content": content or entity_name}
                     chunk_idx += 1
                 
                 else:
-                    # For other types, just return the entity
-                    chunks[f"chunk{chunk_idx}"] = {
-                        "Entity": entity_name,
-                        "Content": content
-                    }
+                    # For other types
+                    if not content:
+                        content = await self._get_neo4j_description(entity_name) or entity_name
+                    
+                    chunks[f"chunk{chunk_idx}"] = {"Entity": entity_name, "Content": content}
                     chunk_idx += 1
             
             logger.info(f"Query completed: {len(chunks)} chunks returned")
