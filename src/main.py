@@ -1,17 +1,11 @@
 """Main MCP server application."""
-
 import sys
 import asyncio
 from pathlib import Path
-
 from fastmcp import FastMCP
-
 from src.core.config import settings
 from src.core.logging import logger
 from src.services.rag_service import RAGService
-from src.ingest.entities_catalog import build_entity_catalog
-
-# Add the project root to the Python path
 sys.path.insert(0, str(Path(__file__).parent.parent.resolve()))
 
 # Create FastMCP server
@@ -50,11 +44,7 @@ async def finalize_service():
 
 
 @mcp.tool()
-async def query_chunks(
-    query: str,
-    mode: str = "global",
-    top_k: int = 10
-) -> dict:
+async def query_chunks(query: str,mode: str = "global",top_k: int = 10) -> dict:
     """
     Query the knowledge graph and return relevant chunks with full hierarchy.
     
@@ -112,14 +102,8 @@ async def build_catalog() -> dict:
         }
     
     try:
-        rag = _rag_service.get_rag()
-        stats = await build_entity_catalog(rag)
-        
-        return {
-            "success": True,
-            "message": "Entity catalog built successfully",
-            "statistics": stats
-        }
+        result = await _rag_service.build_catalog()
+        return result
     
     except Exception as e:
         logger.error(f"Error building catalog: {e}")
@@ -154,8 +138,6 @@ async def health_check() -> dict:
 
 if __name__ == "__main__":
     logger.debug("initialized settings", settings=settings)
-    
-    # Initialize service before running
     asyncio.run(initialize_service())
     mcp.run()
 

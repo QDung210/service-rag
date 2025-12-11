@@ -31,7 +31,7 @@ async def main():
             logger.info(f"Query: {query}")
             logger.info('=' * 60)
             
-            result = await rag_service.query(query=query, top_k=5)
+            result = await rag_service.query(query=query, mode="global", top_k=10)
             
             # Print full result as JSON
             print(json.dumps(result, indent=2, ensure_ascii=False))

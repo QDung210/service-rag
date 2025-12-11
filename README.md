@@ -1,199 +1,162 @@
 # RAG Service - Database Schema Query System
 
-Hệ thống RAG cho việc truy vấn schema database sử dụng LightRAG, PGVector, Neo4j và LiteLLM.
+RAG system for querying database schemas using LightRAG, PGVector, Neo4j, and LiteLLM.
 
-## 📁 Cấu Trúc Folder
+## 📁 Folder Structure
 
 ```
 service_rag/
-├── docker-compose.yml              # Cấu hình Docker cho infrastructure (PostgreSQL, Neo4j, LiteLLM)
-├── litellm_config.yaml            # Cấu hình models cho LiteLLM proxy
-├── pyproject.toml                 # Python project config và dependencies (dùng với uv)
-├── env.example                    # File mẫu environment variables (copy thành .env)
-├── Makefile                       # Các lệnh tiện ích (make start, make build-catalog, etc.)
-├── .python-version                # Python version cho uv
+├── docker-compose.yml              # Docker configuration for infrastructure (PostgreSQL, Neo4j, LiteLLM)
+├── litellm_config.yaml            # Model configuration for LiteLLM proxy
+├── pyproject.toml                 # Python project config and dependencies (used with uv)
+├── env.example                    # Environment variables template (copy to .env)
+├── .python-version                # Python version for uv
 ├── .gitignore                     # Git ignore file
 │
-├── src/                           # Source code chính
-│   ├── main.py                    # FastMCP server - entry point chính
+├── src/                           # Main source code
+│   ├── main.py                    # FastMCP server - main entry point
 │   │
 │   ├── core/                      # Core modules
-│   │   ├── config.py              # Settings và environment configuration
-│   │   └── logging.py             # Logging setup với structlog
+│   │   ├── config.py              # Settings and environment configuration
+│   │   └── logging.py             # Logging setup with structlog
 │   │
 │   ├── models/                    # Data models
 │   │   └── schema.py              # Table, Column, ForeignKey models
 │   │
-│   ├── parsers/                   # SQL parsers
-│   │   └── sql_parser.py          # MySQL và PostgreSQL schema parsers
-│   │
 │   ├── services/                  # Business logic services
-│   │   ├── rag_service.py         # LightRAG wrapper service
+│   │   ├── rag_service.py         # LightRAG wrapper service (includes build_catalog method)
 │   │   └── litellm_service.py     # LiteLLM integration
 │   │
-│   └── ingest/                    # Data ingestion (logic xử lý)
-│       └── entities_catalog.py    # Logic tạo entities & relationships từ SQL schemas
-│                                   # (Module này được gọi bởi build_catalog.py)
+│   └── utils/                     # Utility modules
+│       ├── sql_parser.py          # MySQL and PostgreSQL schema parsers
+│       └── entities_catalog.py    # Logic for creating entities & relationships from SQL schemas
 │
-├── scripts/                       # Utility scripts (scripts để chạy)
-│   ├── build_catalog.py          # ⭐ Script chính để build entity catalog (CHẠY FILE NÀY)
-│   └── test_query.py             # Script để test queries
+├── scripts/                       # Utility scripts
+│   ├── build_catalog.py           # Script wrapper to build entity catalog (calls RAGService.build_catalog)
+│   └── test_query.py              # Script to test queries
 │
-├── data/                          # SQL schema files (copy 2 file SQL vào đây)
+├── data/                          # SQL schema files (copy 2 SQL files here)
 │   ├── vd.sql                    # MySQL schema
 │   └── sqlfile.sql               # PostgreSQL schema
 │
-├── rag_storage/                   # LightRAG working directory (tự động tạo)
-└── schema_docs/                   # Generated markdown docs (tự động tạo)
+├── rag_storage/                   # LightRAG working directory (auto-created)
+└── schema_docs/                   # Generated markdown docs (auto-created)
 ```
 
-## 🚀 Các Bước Chạy Project
+## 🚀 Project Setup Steps
 
-### Bước 1: Cài đặt uv
+### Step 1: Install uv
 
 ```bash
 pip install uv
-# Verify installation
-uv --version
 ```
 
-### Bước 2: Setup Environment
+### Step 2: Setup Environment
 
 ```bash
-# 1. Copy file env example
+# 1. Copy the example env file
 copy env.example .env
 
-# 2. Edit file .env và config các keys
+# 2. Edit the .env file and configure the keys
 ```
 
-**Quan trọng - Config các keys trong `.env`:**
+**Important - Configure keys in `.env`:**
 
 1. **OPENAI_API_KEY** (REQUIRED): 
-   - Lấy từ https://platform.openai.com/api-keys
-   - Thay `your_openai_api_key_here` bằng key thật
+   - Get from https://platform.openai.com/api-keys
+   - Replace `your_openai_api_key_here` with your actual key
 
-2. **LITELLM_KEY** (Tự tạo):
-   - Đây là master key BẠN TỰ ĐỊNH NGHĨA để bảo vệ LiteLLM proxy
-   - Development: Dùng `sk-1234` (đã set sẵn)
-   - Production: Đổi thành key phức tạp (ví dụ: `sk-prod-abc123xyz789`)
-   - **Phải khớp** với `LITELLM_MASTER_KEY` trong `docker-compose.yml`
+2. **LITELLM_KEY** (Self-generated):
+   - This is a master key YOU DEFINE to protect the LiteLLM proxy
+   - Development: Use `sk-1234` (already set)
+   - Production: Change to a complex key (e.g., `sk-prod-abc123xyz789`)
+   - **Must match** `LITELLM_MASTER_KEY` in `docker-compose.yml`
 
-3. **Database credentials**: Đã set sẵn cho local development
+3. **Database credentials**: Already set for local development
 
-### Bước 3: Install Dependencies
+### Step 3: Install Dependencies
 
 ```bash
-# Install dependencies với uv
+# Install dependencies with uv
 uv sync
 ```
 
-### Bước 4: Start Infrastructure Services
+### Step 4: Start Infrastructure Services
 
 ```bash
-# Start PostgreSQL, Neo4j, và LiteLLM với Docker
+# Start PostgreSQL, Neo4j, and LiteLLM with Docker
 docker-compose up -d
-
-# Check logs
-docker-compose logs -f
-
-# Đợi đến khi tất cả services healthy
-docker-compose ps
 ```
 
-**Services infrastructure:**
+**Infrastructure services:**
 - PostgreSQL/PGVector: `localhost:5432`
 - Neo4j Browser: `http://localhost:7474` (neo4j/neo4j_local_dev)
 - Neo4j Bolt: `localhost:7687`
 - LiteLLM Proxy: `http://localhost:4000`
 
-### Bước 5: Build Entity Catalog
+### Step 5: Build Entity Catalog
 
 ```bash
-# Chạy script với uv
+# Run script with uv
 uv run python scripts/build_catalog.py
 ```
 
-**Quá trình này sẽ:**
-1. Parse 2 SQL files (MySQL và PostgreSQL) bằng parsers
-2. Tạo 2 database nodes riêng biệt
-3. Tạo entities: Database, Table, Column, Owner, Tag
-4. Tạo relationships: HAS_TABLE, HAS_COLUMN, REFERENCES, TAGGED, OWNED_BY
-5. Lưu vectors vào PGVector
-6. Lưu graph vào Neo4j
+**This process will:**
+1. Parse 2 SQL files (MySQL and PostgreSQL) using parsers
+2. Create 2 separate database nodes
+3. Create entities: Database, Table, Column, Owner, Tag
+4. Create relationships: HAS_TABLE, HAS_COLUMN, REFERENCES, TAGGED, OWNED_BY
+5. Save vectors to PGVector
+6. Save graph to Neo4j
 
-**Flow xử lý:**
+**Processing flow:**
 ```
-scripts/build_catalog.py (script chạy)
+scripts/build_catalog.py (script wrapper)
     ↓
-src/ingest/entities_catalog.py (logic xử lý)
+RAGService.build_catalog() (in src/services/rag_service.py)
     ↓
-src/parsers/sql_parser.py (parse SQL)
+build_entity_catalog() (in src/utils/entities_catalog.py)
     ↓
-src/services/rag_service.py (lưu vào LightRAG)
+sql_parser.py (parse SQL)
+    ↓
+LightRAG (save to storage)
     ↓
 PostgreSQL (vectors) + Neo4j (graph)
 ```
 
-⏱️ **Thời gian**: ~5-10 phút tùy kích thước SQL files
+⏱️ **Duration**: ~5-10 minutes depending on SQL file size
 
-### Bước 6: Test Query
+### Step 6: Test Query
 
 ```bash
-# Test với uv
+# Test with uv
 uv run python scripts/test_query.py
 ```
 
-### Bước 7: Run MCP Server
+### Step 7: Run MCP Server
 
 ```bash
-# Run service với uv
+# Run service with uv
 uv run python -m src.main
 ```
 
-Service sẽ chạy như một MCP server, sẵn sàng nhận requests từ Claude Desktop.
-
-
-## 📊 Verify Setup
-
-### Check PostgreSQL/PGVector
-```bash
-# Check connection
-docker exec -it rag-postgres psql -U postgres -d postgres
-
-# Check entities table (sau khi build catalog)
-docker exec -it rag-postgres psql -U postgres -d postgres -c "SELECT COUNT(*) FROM lightrag_vdb_entity;"
-```
-
-### Check Neo4j
-- Mở http://localhost:7474
-- Login: `neo4j` / `neo4j_local_dev`
-- Chạy query: `MATCH (n) RETURN count(n)`
-
-### Check LiteLLM
-```bash
-curl http://localhost:4000/health
-```
-
 ## 🔍 Example Queries 
-Sau khi setup xong và kết nối với Claude Desktop:
-
 ```
-"Tìm thông tin liên quan đến số điện thoại"
-"Các bảng có cột email"
-"Foreign key relationships từ bảng accommodation"
-"Tất cả columns có kiểu timestamp"
-"Cấu trúc của bảng users"
-"Tìm các bảng trong MySQL database"
+"Find information related to phone numbers"
+"Tables with email columns"
+"Foreign key relationships from accommodation table"
+"All columns with timestamp type"
+"Structure of users table"
+"Find tables in MySQL database"
 ```
 
 
 ## 🏗️ Tech Stack
 
-- **uv**: Fast Python package installer (thay thế pip)
+- **uv**: Fast Python package installer (replaces pip)
 - **LightRAG**: RAG framework
-- **PGVector**: Vector storage (PostgreSQL extension, run trong Docker)
-- **Neo4j**: Graph storage (run trong Docker)
-- **LiteLLM**: LLM proxy/gateway (run trong Docker) - hỗ trợ nhiều providers
-- **OpenAI API**: LLM và embeddings (gpt-4o-mini, text-embedding-3-small)
-- **FastMCP**: MCP server (run local)
-
+- **PGVector**: Vector storage (PostgreSQL extension, runs in Docker)
+- **Neo4j**: Graph storage (runs in Docker)
+- **LiteLLM**: LLM proxy/gateway (runs in Docker) - supports multiple providers
+- **OpenAI API**: LLM and embeddings (gpt-4o-mini, text-embedding-3-small)
+- **FastMCP**: MCP server (runs locally)

@@ -5,6 +5,8 @@ from lightrag import LightRAG
 from src.core.config import settings
 from src.core.logging import logger
 from src.services.litellm_service import litellm_complete, litellm_embed
+from src.utils.chunk_formatter import format_chunks_hierarchical
+from src.utils.entities_catalog import build_entity_catalog
 
 
 class RAGService:
@@ -26,17 +28,12 @@ class RAGService:
             embedding_func=litellm_embed,
             llm_model_func=litellm_complete,
             llm_model_name=settings.LLM_MODEL,
-            
-            # Use PGVector for vector storage
             vector_storage="PGVectorStorage",
-            
-            # Use Neo4j for graph storage
             graph_storage="Neo4JStorage",
         )
         
         # Initialize storages
         await self.rag.initialize_storages()
-        
         logger.info("✓ RAG Service initialized successfully")
         logger.info(f"  - Working directory: {settings.WORKING_DIR}")
         logger.info(f"  - Vector storage: PGVector ({settings.POSTGRES_HOST})")
@@ -120,12 +117,7 @@ class RAGService:
         
         return ''
     
-    async def query(
-        self,
-        query: str,
-        mode: str = "global",
-        top_k: int = 10
-    ) -> dict:
+    async def query(self, query: str, mode: str = "global", top_k: int = 10) -> dict:
         """
         Query the RAG system.
         
@@ -141,95 +133,25 @@ class RAGService:
             raise RuntimeError("RAG Service not initialized")
         
         logger.info(f"Querying RAG: '{query}' (mode={mode}, top_k={top_k})")
+        # Query the vector database for entities
+        entity_vdb = self.rag.entities_vdb
+        results = await entity_vdb.query(query, top_k=top_k)
         
-        try:
-            # Query the vector database for entities
-            entity_vdb = self.rag.entities_vdb
-            results = await entity_vdb.query(query, top_k=top_k)
-            
-            # Format results as chunks
-            chunks = {}
-            chunk_idx = 1
-            
-            for result in results:
-                entity_name = result.get('entity_name', 'N/A')
-                
-                # Get description from Neo4j (always query for full description)
-                content = await self._get_neo4j_description(entity_name)
-                
-                # Parse entity type and name
-                if ':' in entity_name:
-                    entity_type, name = entity_name.split(':', 1)
-                else:
-                    entity_type, name = 'Unknown', entity_name
-                
-                # Build hierarchy based on entity type
-                if entity_type == 'Column':
-                    # Column format: "database.table.column"
-                    parts = name.split('.')
-                    if len(parts) >= 3:
-                        db_name, table_name = parts[0], parts[1]
-                        
-                        # Add Database
-                        db_key = f"Database:{db_name}"
-                        db_content = await self._get_neo4j_description(db_key) or f"Database: {db_name}"
-                        chunks[f"chunk{chunk_idx}"] = {"Entity": db_key, "Content": db_content}
-                        chunk_idx += 1
-                        
-                        # Add Table
-                        table_key = f"Table:{db_name}.{table_name}"
-                        table_content = await self._get_neo4j_description(table_key) or f"Table: {table_name} in database {db_name}"
-                        chunks[f"chunk{chunk_idx}"] = {"Entity": table_key, "Content": table_content}
-                        chunk_idx += 1
-                        
-                        # Add Column
-                        chunks[f"chunk{chunk_idx}"] = {"Entity": entity_name, "Content": content or entity_name}
-                        chunk_idx += 1
-                
-                elif entity_type == 'Table':
-                    # Table format: "database.table"
-                    parts = name.split('.')
-                    if len(parts) >= 2:
-                        db_name = parts[0]
-                        
-                        # Add Database
-                        db_key = f"Database:{db_name}"
-                        db_content = await self._get_neo4j_description(db_key) or f"Database: {db_name}"
-                        chunks[f"chunk{chunk_idx}"] = {"Entity": db_key, "Content": db_content}
-                        chunk_idx += 1
-                    
-                    # Add Table
-                    chunks[f"chunk{chunk_idx}"] = {"Entity": entity_name, "Content": content or entity_name}
-                    chunk_idx += 1
-                
-                else:
-                    # For other types
-                    if not content:
-                        content = await self._get_neo4j_description(entity_name) or entity_name
-                    
-                    chunks[f"chunk{chunk_idx}"] = {"Entity": entity_name, "Content": content}
-                    chunk_idx += 1
-            
-            logger.info(f"Query completed: {len(chunks)} chunks returned")
-            
-            return {
-                "success": True,
-                "query": query,
-                "mode": mode,
-                "total_chunks": len(chunks),
-                "chunks": chunks
-            }
+        # Format results as hierarchical chunks
+        formatted_result = await format_chunks_hierarchical(
+            results=results,
+            get_neo4j_description=self._get_neo4j_description
+        )
         
-        except Exception as e:
-            logger.error(f"Query error: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "query": query,
-                "mode": mode,
-                "total_chunks": 0,
-                "chunks": {}
-            }
+        logger.info(f"Query completed: {formatted_result['total_chunks']} chunks returned")
+        
+        return {
+            "success": True,
+            "query": query,
+            "mode": mode,
+            "total_chunks": formatted_result["total_chunks"],
+            "chunks": formatted_result["chunks"]
+        }
     
     async def insert(self, text: str) -> None:
         """
@@ -249,4 +171,33 @@ class RAGService:
         if not self.rag:
             raise RuntimeError("RAG Service not initialized")
         return self.rag
-
+    
+    async def build_catalog(self) -> dict:
+        """
+        Build entity catalog from SQL files.
+        
+        Returns:
+            Dictionary with success status and statistics
+        """
+        if not self.rag:
+            raise RuntimeError("RAG Service not initialized")
+        
+        logger.info("Building Entity Catalog")
+        try:
+            # Build entity catalog
+            stats = await build_entity_catalog(self.rag)
+            logger.info("Entity Catalog Built Successfully!")
+            logger.info(f"Statistics: {stats}")
+            return {
+                "success": True,
+                "message": "Entity catalog built successfully",
+                "statistics": stats
+            }
+        except Exception as e:
+            logger.error(f"Error building catalog: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                "success": False,
+                "error": str(e)
+            }

@@ -1,48 +1,52 @@
 """Script to build entity catalog from SQL files."""
-
+import traceback
 import asyncio
 import sys
 from pathlib import Path
-
-# Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from src.services.rag_service import RAGService
-from src.ingest.entities_catalog import build_entity_catalog
 from src.core.logging import logger
 
 
 async def main():
     """Main function to build catalog."""
-    logger.info("=" * 80)
     logger.info("Building Entity Catalog")
-    logger.info("=" * 80)
-    
     # Initialize RAG service
     rag_service = RAGService()
     await rag_service.initialize()
-    
     try:
         # Build entity catalog
-        rag = rag_service.get_rag()
-        stats = await build_entity_catalog(rag)
+        result = await rag_service.build_catalog()
+        logger.info("Entity Catalog Built Successfully!")
+        logger.info(f"Result: {result}")
+        logger.info("Catalog build process completed. Exiting...")
         
-        logger.info("\n" + "=" * 80)
-        logger.info("✅ Entity Catalog Built Successfully!")
-        logger.info("=" * 80)
-        logger.info(f"Statistics: {stats}")
+        # Exit successfully after completion
+        sys.exit(0)
         
     except Exception as e:
         logger.error(f"Error building catalog: {e}")
-        import traceback
         traceback.print_exc()
         sys.exit(1)
     
     finally:
         # Cleanup
         await rag_service.finalize()
+        logger.info("RAG service finalized. Process terminated.")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    TIMEOUT_SECONDS = 600
+    try:
+        asyncio.run(asyncio.wait_for(main(), timeout=TIMEOUT_SECONDS))
+    except asyncio.TimeoutError:
+        sys.exit(1)
+    except KeyboardInterrupt:
+        logger.info("Process interrupted by user")
+        sys.exit(0)
+    except SystemExit as e:
+        raise
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
+        sys.exit(1)
 

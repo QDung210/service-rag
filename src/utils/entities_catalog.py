@@ -13,7 +13,7 @@ from lightrag import LightRAG
 from src.core.config import settings
 from src.core.logging import logger
 from src.models.schema import Table
-from src.parsers.sql_parser import MySQLSchemaParser, PostgreSQLSchemaParser
+from src.utils.sql_parser import MySQLSchemaParser, PostgreSQLSchemaParser
 
 
 # Database metadata configurations
@@ -391,6 +391,12 @@ JOIN {fk.ref_table} ON {table_name}.{fk.column} = {fk.ref_table}.{fk.ref_column}
                     )
                     fk_count += 1
                     logger.info(f"✓ FK: {table_name}.{fk.column} → {fk.ref_table}.{fk.ref_column}")
+                    
+                    # Stop after creating relation from business_trips to employees
+                    if (from_table_entity == "Table:postgres_legacy_db.business_trips" and 
+                        to_table_entity == "Table:postgres_legacy_db.employees"):
+                        raise SystemExit("Stopped after creating business_trips → employees relation as requested")
+                    
                 except ValueError as e:
                     if "already exists" in str(e):
                         logger.debug(f"⊙ FK: {table_name}.{fk.column} → {fk.ref_table}.{fk.ref_column} (already exists)")
@@ -476,27 +482,24 @@ async def build_entity_catalog(rag: LightRAG) -> Dict[str, int]:
         # Create database entity
         await builder.create_database_entity(db_key)
         stats["databases"] += 1
-        
+
         # Create table entities
         await builder.create_table_entities(db_key, tables)
         stats["tables"] += len(tables)
-        
         # Create column entities
         col_count = await builder.create_column_entities(db_key, tables)
         stats["columns"] += col_count
-        
         # Create foreign key relationships
         fk_count = await builder.create_foreign_key_relations(db_key, tables)
         stats["foreign_keys"] += fk_count
-    
-    logger.info("\n" + "=" * 80)
+
     logger.info("Entity Catalog Creation Complete!")
-    logger.info("=" * 80)
     logger.info(f"Statistics:")
     logger.info(f"  - Databases: {stats['databases']}")
     logger.info(f"  - Tables: {stats['tables']}")
     logger.info(f"  - Columns: {stats['columns']}")
     logger.info(f"  - Foreign Keys: {stats['foreign_keys']}")
+    logger.info("All data ingestion completed successfully!")
     
     return stats
 
